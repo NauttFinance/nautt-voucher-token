@@ -9,6 +9,10 @@ Foundry consists of:
 - **Anvil**: Local Ethereum node, akin to Ganache, Hardhat Network.
 - **Chisel**: Fast, utilitarian, and verbose solidity REPL.
 
+## Convenções de código
+
+- **Comentários apenas em NatSpec.** Todo comentário no código do contrato deve usar o formato NatSpec (`///` ou `/** ... */`) com as tags apropriadas (`@notice`, `@dev`, `@param`, `@return`, `@inheritdoc`). Não usar comentários soltos `//` ou `/* */` para documentar contratos, funções, variáveis de estado, eventos ou erros.
+
 ## Documentation
 
 https://book.getfoundry.sh/
