@@ -15,11 +15,17 @@ import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Recei
  * Erros personalizados (mais baratos em gas que require + string).
  * - PaymentAlreadyMinted: barra reprocessamento de um pagamento já mintado — garante 1 pagamento = 1 NVT.
  * - TokenAlreadyClaimed:  impede resgatar o mesmo token duas vezes.
+ * - InvalidEmailHash:     rejeita emailHash zerada (bytes32(0)) no mint.
+ * - InvalidPaymentKey:    rejeita paymentKey zerada (bytes32(0)) no mint.
+ * - InvalidURI:           rejeita uri vazia no mint.
  * - ZeroAddress:          rejeita o endereço zero em entradas obrigatórias.
- * - NotImplemented:       stub temporário dos corpos ainda não escritos (mint/claim/rescue). Remover ao implementar.
+ * - NotImplemented:       stub temporário dos corpos ainda não escritos (claim/rescue). Remover ao implementar.
  */
 error PaymentAlreadyMinted(bytes32 paymentKey);
 error TokenAlreadyClaimed(uint256 tokenId);
+error InvalidEmailHash();
+error InvalidPaymentKey();
+error InvalidURI();
 error ZeroAddress();
 error NotImplemented();
 
@@ -32,7 +38,13 @@ error NotImplemented();
  *      são sempre executados pelo backend da Nautt (relayer); o cliente nunca assina nem paga gas.
  *      Nenhuma PII on-chain: o vínculo com o cliente é uma hash salgada do email calculada off-chain.
  */
-contract Nvt is ERC721URIStorage, AccessControl, Pausable, ReentrancyGuard, IERC721Receiver {
+contract Nvt is
+    ERC721URIStorage,
+    AccessControl,
+    Pausable,
+    ReentrancyGuard,
+    IERC721Receiver
+{
     /*//////////////////////////////////////////////////////////////
                             STATE VARIABLES
     //////////////////////////////////////////////////////////////*/
@@ -67,7 +79,12 @@ contract Nvt is ERC721URIStorage, AccessControl, Pausable, ReentrancyGuard, IERC
      * - NvtClaimed: voucher resgatado — posse transferida do escrow ao cliente.
      * - NvtRescued: token travado resgatado por emergência (admin/multisig).
      */
-    event NvtMinted(uint256 indexed tokenId, bytes32 indexed paymentKey, bytes32 indexed emailHash, string uri);
+    event NvtMinted(
+        uint256 indexed tokenId,
+        bytes32 indexed paymentKey,
+        bytes32 indexed emailHash,
+        string uri
+    );
     event NvtClaimed(uint256 indexed tokenId, address indexed to);
     event NvtRescued(uint256 indexed tokenId, address indexed to);
 
@@ -104,20 +121,48 @@ contract Nvt is ERC721URIStorage, AccessControl, Pausable, ReentrancyGuard, IERC
     /// @param emailHash hash salgada do email do cliente, calculada off-chain.
     /// @param uri referência dos metadados off-chain (S3).
     /// @return tokenId identificador do token criado.
-    function mint(bytes32 paymentKey, bytes32 emailHash, string calldata uri)
-        external
-        onlyRole(MINTER_ROLE)
-        whenNotPaused
-        returns (uint256 tokenId)
-    {
-        revert NotImplemented();
+
+    function mint(
+        bytes32 paymentKey,
+        bytes32 emailHash,
+        string calldata uri
+    ) external onlyRole(MINTER_ROLE) whenNotPaused returns (uint256 tokenId) { 
+        // Checks
+        if (paymentKey == bytes32(0)) {
+            revert InvalidPaymentKey();
+        }
+        if (emailHash == bytes32(0)) {
+            revert InvalidEmailHash();
+        }
+        if (bytes(uri).length == 0) {
+            revert InvalidURI();
+        }
+        /// @dev verifica se o pagamento já foi mintado em NFT
+        if (s_paymentAlreadyMinted[paymentKey]) {
+            revert PaymentAlreadyMinted(paymentKey);
+        }
+
+        // Effects
+        tokenId = s_nextTokenId++;
+        s_paymentAlreadyMinted[paymentKey] = true;
+        s_mintedPayments[paymentKey] = tokenId;
+        s_tokensOfEmail[emailHash].push(tokenId);
+        _setTokenURI(tokenId, uri);
+
+        // Interactions
+        _safeMint(address(this), tokenId);
+
+        emit NvtMinted(tokenId, paymentKey, emailHash, uri);
     }
 
     /// @notice Resgata um voucher transferindo sua posse do escrow para o cliente (uma única vez).
     /// @dev TODO: seguir CEI — marcar s_isTokenClaimed = true ANTES do _safeTransfer. Emitir NvtClaimed.
     /// @param tokenId identificador do token a resgatar.
     /// @param to endereço da carteira do cliente informado no front-end.
-    function claim(uint256 tokenId, address to) external onlyRole(OPERATOR_ROLE) whenNotPaused nonReentrant {
+    function claim(
+        uint256 tokenId,
+        address to
+    ) external nonReentrant whenNotPaused onlyRole(OPERATOR_ROLE) {
         revert NotImplemented();
     }
 
@@ -135,12 +180,20 @@ contract Nvt is ERC721URIStorage, AccessControl, Pausable, ReentrancyGuard, IERC
     /// @dev TODO: transferir o token de address(this) para `to` e emitir NvtRescued.
     /// @param tokenId identificador do token a resgatar por emergência.
     /// @param to endereço de destino.
-    function rescue(uint256 tokenId, address to) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function rescue(
+        uint256 tokenId,
+        address to
+    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
         revert NotImplemented();
     }
 
     /// @inheritdoc IERC721Receiver
-    function onERC721Received(address, address, uint256, bytes calldata) external pure returns (bytes4) {
+    function onERC721Received(
+        address,
+        address,
+        uint256,
+        bytes calldata
+    ) external pure returns (bytes4) {
         return IERC721Receiver.onERC721Received.selector;
     }
 
@@ -158,14 +211,18 @@ contract Nvt is ERC721URIStorage, AccessControl, Pausable, ReentrancyGuard, IERC
     /// @notice Lista os tokenIds vinculados a um email (via hash salgada).
     /// @param emailHash hash salgada do email do cliente.
     /// @return a lista de tokenIds do cliente.
-    function tokensOf(bytes32 emailHash) external view returns (uint256[] memory) {
+    function tokensOf(
+        bytes32 emailHash
+    ) external view returns (uint256[] memory) {
         return s_tokensOfEmail[emailHash];
     }
 
     /// @notice Retorna o tokenId gerado por um pagamento.
     /// @param paymentKey chave do pagamento (keccak256(paymentId)).
     /// @return o tokenId associado (0 se não houver — confira com o fluxo de idempotência).
-    function mintedPaymentOf(bytes32 paymentKey) external view returns (uint256) {
+    function mintedPaymentOf(
+        bytes32 paymentKey
+    ) external view returns (uint256) {
         return s_mintedPayments[paymentKey];
     }
 
@@ -177,12 +234,9 @@ contract Nvt is ERC721URIStorage, AccessControl, Pausable, ReentrancyGuard, IERC
     }
 
     /// @inheritdoc ERC721URIStorage
-    function supportsInterface(bytes4 interfaceId)
-        public
-        view
-        override(ERC721URIStorage, AccessControl)
-        returns (bool)
-    {
+    function supportsInterface(
+        bytes4 interfaceId
+    ) public view override(ERC721URIStorage, AccessControl) returns (bool) {
         return super.supportsInterface(interfaceId);
     }
 }
