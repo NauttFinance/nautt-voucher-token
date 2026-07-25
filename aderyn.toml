@@ -1,0 +1,32 @@
+# Aderyn Configuration File
+# Controle da varredura estática (Cyfrin Aderyn).
+
+# NÃO alterar — apenas a versão 1 é suportada.
+version = 1
+
+# Raiz do projeto (onde vive o foundry.toml).
+root = "."
+
+# Diretório de contratos. Auto-detectado como "src/" no Foundry; explicitado aqui por clareza.
+src = "src/"
+
+[detectors]
+# ---------------------------------------------------------------------------
+# centralization-risk — EXCLUÍDO POR DESIGN (risco aceito e documentado)
+#
+# O detector dispara em toda função com controle de acesso (onlyRole). No NVT
+# isso é premissa da arquitetura, não uma falha:
+#   - O relayer da Nautt minta (MINTER_ROLE) e resgata (OPERATOR_ROLE); o
+#     cliente nunca assina transação nem paga gas.
+#   - rescue/pause são poderes de emergência intencionais do DEFAULT_ADMIN_ROLE.
+#
+# A centralização é MITIGADA operacionalmente (ver CLAUDE.md §5), não removida:
+#   - DEFAULT_ADMIN_ROLE = multisig da Nautt (não uma EOA única).
+#   - rescue somente via multisig + timelock.
+#   - MINTER separado de OPERATOR: comprometer um não habilita o outro.
+#   - Eventos auditáveis (NvtRescued) + Pausable como freio.
+#
+# Portanto o achado é um "true positive" de risco ACEITO — silenciamos o ruído
+# aqui, num único ponto, em vez de espalhar `aderyn-ignore-next-line` pelo código.
+# ---------------------------------------------------------------------------
+exclude = ["centralization-risk"]
