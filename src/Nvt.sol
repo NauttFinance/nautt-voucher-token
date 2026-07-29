@@ -19,7 +19,6 @@ import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Recei
  * - InvalidPaymentKey:    rejeita paymentKey zerada (bytes32(0)) no mint.
  * - InvalidURI:           rejeita uri vazia no mint.
  * - ZeroAddress:          rejeita o endereço zero em entradas obrigatórias.
- * - NotImplemented:       stub temporário dos corpos ainda não escritos (claim/rescue). Remover ao implementar.
  */
 error PaymentAlreadyMinted(bytes32 paymentKey);
 error TokenAlreadyClaimed(uint256 tokenId);
@@ -27,7 +26,6 @@ error InvalidEmailHash();
 error InvalidPaymentKey();
 error InvalidURI();
 error ZeroAddress();
-error NotImplemented();
 
 /**
  * @title Nvt — Nautt Voucher Token
@@ -61,6 +59,10 @@ contract Nvt is
      * - s_tokensOfEmail:        emailHash (salgada, off-chain) => lista de tokenIds do cliente. Consulta central do resgate.
      * - s_isTokenClaimed:       tokenId => já resgatado? Impede resgate em duplicidade.
      * - s_nextTokenId:          contador do próximo tokenId livre.
+     *
+     * Imutáveis (prefixo i_; definidos no constructor, nunca alterados):
+     * - i_recoveryVault: destino fixo do rescue. O rescue nunca envia para endereço arbitrário — só para este cofre,
+     *                    respeitando least privilege (o admin não pode "mandar qualquer NFT pra qualquer lugar").
      */
     bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
@@ -70,6 +72,8 @@ contract Nvt is
     mapping(bytes32 => uint256[]) private s_tokensOfEmail;
     mapping(uint256 => bool) private s_isTokenClaimed;
     uint256 private s_nextTokenId;
+
+    address private immutable i_recoveryVault;
 
     /*//////////////////////////////////////////////////////////////
                                 EVENTS
@@ -92,15 +96,21 @@ contract Nvt is
                               CONSTRUCTOR
     //////////////////////////////////////////////////////////////*/
     /*
-     * Define nome/símbolo do ERC-721 e concede o papel de admin ao multisig da Nautt.
-     * O admin concede MINTER_ROLE e OPERATOR_ROLE posteriormente.
+     * Define nome/símbolo do ERC-721, concede o papel de admin ao multisig da Nautt e fixa o cofre de recuperação.
+     * O admin concede MINTER_ROLE e OPERATOR_ROLE posteriormente. O cofre (i_recoveryVault) é imutável: destino
+     * único de qualquer rescue.
      */
     /// @param admin endereço do multisig que administra roles, pause e rescue.
-    constructor(address admin) ERC721("Nautt Voucher Token", "NVT") {
-        if (admin == address(0)) {
+    /// @param recoveryVault endereço fixo para onde o rescue envia tokens de emergência (imutável).
+    constructor(
+        address admin,
+        address recoveryVault
+    ) ERC721("Nautt Voucher Token", "NVT") {
+        if (admin == address(0) || recoveryVault == address(0)) {
             revert ZeroAddress();
         }
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
+        i_recoveryVault = recoveryVault;
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -110,9 +120,9 @@ contract Nvt is
      * - mint:   MINTER_ROLE, whenNotPaused. Idempotente por paymentKey. Minta em escrow (address(this)).
      * - claim:  OPERATOR_ROLE, whenNotPaused, nonReentrant. Transfere a posse ao cliente uma única vez (CEI).
      * - pause / unpause: DEFAULT_ADMIN_ROLE. Parada de emergência que cobre mint e claim.
-     * - rescue: DEFAULT_ADMIN_ROLE. Saída de emergência para tokens travados no escrow (evento auditável).
+     * - rescue: DEFAULT_ADMIN_ROLE, nonReentrant. Saída de emergência: envia o token do escrow para o cofre fixo
+     *           (i_recoveryVault). Sem whenNotPaused — precisa funcionar durante uma pausa. Evento auditável.
      * - onERC721Received: obrigatório — o mint via _safeMint(address(this)) invoca este hook no contrato.
-     * mint/claim/rescue estão como stub revertendo NotImplemented() até serem implementados passo a passo.
      */
 
     /// @notice Minta um NVT em escrow após a confirmação de um pagamento.
@@ -126,7 +136,7 @@ contract Nvt is
         bytes32 paymentKey,
         bytes32 emailHash,
         string calldata uri
-    ) external onlyRole(MINTER_ROLE) whenNotPaused returns (uint256 tokenId) { 
+    ) external onlyRole(MINTER_ROLE) whenNotPaused returns (uint256 tokenId) {
         // Checks
         if (paymentKey == bytes32(0)) {
             revert InvalidPaymentKey();
@@ -163,7 +173,21 @@ contract Nvt is
         uint256 tokenId,
         address to
     ) external nonReentrant whenNotPaused onlyRole(OPERATOR_ROLE) {
-        revert NotImplemented();
+        // Checks
+        if (to == address(0)) {
+            revert ZeroAddress();
+        }
+        if (s_isTokenClaimed[tokenId]) {
+            revert TokenAlreadyClaimed(tokenId);
+        }
+
+        // Effects
+        s_isTokenClaimed[tokenId] = true;
+
+        // Interactions
+        _safeTransfer(address(this), to, tokenId);
+
+        emit NvtClaimed(tokenId, to);
     }
 
     /// @notice Pausa mint e claim (parada de emergência).
@@ -176,15 +200,25 @@ contract Nvt is
         _unpause();
     }
 
-    /// @notice Saída de emergência para tokens travados no escrow. Somente via admin/multisig.
-    /// @dev TODO: transferir o token de address(this) para `to` e emitir NvtRescued.
+    /// @notice Saída de emergência: transfere um token travado do escrow para o cofre fixo. Somente admin/multisig.
+    /// @dev Sem whenNotPaused (deve funcionar durante uma pausa). CEI: marca claimed antes de transferir. O destino
+    ///      é sempre i_recoveryVault — nunca um endereço arbitrário.
     /// @param tokenId identificador do token a resgatar por emergência.
-    /// @param to endereço de destino.
     function rescue(
-        uint256 tokenId,
-        address to
-    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        revert NotImplemented();
+        uint256 tokenId
+    ) external nonReentrant onlyRole(DEFAULT_ADMIN_ROLE) {
+        // Checks
+        if (s_isTokenClaimed[tokenId]) {
+            revert TokenAlreadyClaimed(tokenId);
+        }
+
+        // Effects
+        s_isTokenClaimed[tokenId] = true;
+
+        // Interactions
+        _safeTransfer(address(this), i_recoveryVault, tokenId);
+
+        emit NvtRescued(tokenId, i_recoveryVault);
     }
 
     /// @inheritdoc IERC721Receiver
