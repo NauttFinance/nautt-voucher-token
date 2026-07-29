@@ -78,12 +78,14 @@ Nomes seguem a convenção `s_` (ver §4). Storage **privado**; a API pública s
 | `s_tokensOfEmail` | `mapping(bytes32 => uint256[])` | emailHash → lista de tokenIds do cliente |
 | `s_isTokenClaimed` | `mapping(uint256 => bool)` | token já resgatado? (impede resgate duplo) |
 | `s_nextTokenId` | `uint256` | contador do próximo tokenId livre |
+| `i_recoveryVault` | `address immutable` | destino **fixo** do `rescue` (least privilege — nunca endereço arbitrário) |
 
 ### Funções (API)
+- `constructor(address admin, address recoveryVault)` — concede `DEFAULT_ADMIN_ROLE` ao `admin` e fixa `i_recoveryVault` (imutável). Revert `ZeroAddress` se algum for `address(0)`.
 - `mint(bytes32 paymentKey, bytes32 emailHash, string uri) → uint256` — `MINTER_ROLE`, `whenNotPaused`. Revert se já mintado. `_safeMint(address(this))` + `_setTokenURI` + registra mappings + emite `NvtMinted`.
 - `claim(uint256 tokenId, address to)` — `OPERATOR_ROLE`, `whenNotPaused`, `nonReentrant`. Revert se já resgatado ou `to == address(0)`. **CEI:** marca `s_isTokenClaimed = true` **antes** de `_safeTransfer`. Emite `NvtClaimed`.
 - Views: `tokensOf(bytes32 emailHash) → uint256[]`, `mintedPaymentOf(bytes32 paymentKey) → uint256`, `isTokenClaimed(uint256 tokenId) → bool`, além de `ownerOf` / `tokenURI` / `balanceOf` do ERC-721.
-- Admin: `pause()` / `unpause()` (`DEFAULT_ADMIN_ROLE`); `rescue(uint256 tokenId, address to)` (`DEFAULT_ADMIN_ROLE`, evento auditável); `grantRole` / `revokeRole` (herdados).
+- Admin: `pause()` / `unpause()` (`DEFAULT_ADMIN_ROLE`); `rescue(uint256 tokenId)` (`DEFAULT_ADMIN_ROLE`, `nonReentrant`, **sem** `whenNotPaused` — deve funcionar durante pausa; envia **sempre** para `i_recoveryVault`, nunca endereço arbitrário; CEI marca `s_isTokenClaimed` antes de transferir; emite `NvtRescued`); `grantRole` / `revokeRole` (herdados).
 - `onERC721Received` — obrigatório, pois o mint vai para `address(this)` via `_safeMint`.
 
 ### Eventos
@@ -181,7 +183,7 @@ Aplicação crítica: em `claim`, marcar `s_isTokenClaimed[tokenId] = true` (Eff
 ## 5. Segurança (checklist antes de deploy)
 
 - [ ] Roles separadas MINTER / OPERATOR / ADMIN; ADMIN é multisig.
-- [ ] `rescue` só via multisig + timelock (garantia operacional do admin).
+- [ ] `rescue` com destino **fixo** (`i_recoveryVault`), só via multisig + timelock (garantia operacional do admin). Base: Solidity "Fail-Safe Mode" (destino fixo/confiável), ConsenSys Circuit Breakers (caminho de saída ativo na pausa) e Speed Bumps (timelock).
 - [ ] CEI + `nonReentrant` no `claim`.
 - [ ] Idempotência por `paymentKey` testada contra retry.
 - [ ] `Pausable` cobrindo `mint` e `claim`.
@@ -221,12 +223,11 @@ forge-std/=lib/forge-std/src/
 
 ## 8. Estado atual
 
-- [x] Scaffold Foundry criado (com `Counter.sol` padrão, **ainda a remover**).
+- [x] Scaffold Foundry criado; `Counter.sol`/`Counter.s.sol`/`Counter.t.sol` removidos.
 - [x] OpenZeppelin v5.6.1 instalado (`lib/openzeppelin-contracts`) + `remappings.txt`.
-- [x] Esqueleto do `Nvt.sol` (estrutura + partes estruturais implementadas; `mint`/`claim`/`rescue` como stub `NotImplemented()`).
-- [ ] Implementação de `mint` / `claim` / `rescue` (remover `NotImplemented()`).
-- [ ] Remover `Counter.sol` / `Counter.s.sol` / `Counter.t.sol`.
-- [ ] Testes (unit + fuzz).
-- [ ] Script de deploy.
+- [x] `Nvt.sol` com `mint`, `claim` e `rescue` implementados (rescue com cofre fixo `i_recoveryVault`; `NotImplemented` removido).
+- [ ] `forge build` de validação (pendente rodar na máquina do Gabriel).
+- [ ] Testes (unit + fuzz): idempotência do `mint`, resgate único no `claim`, `rescue` só admin/destino fixo, roles, pause.
+- [ ] Script de deploy (constructor agora recebe `admin` e `recoveryVault`).
 
 _Atualizar esta seção a cada passo concluído._
