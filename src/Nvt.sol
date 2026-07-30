@@ -109,6 +109,7 @@ contract Nvt is
         if (admin == address(0) || recoveryVault == address(0)) {
             revert ZeroAddress();
         }
+        // aderyn-fp-next-line(unchecked-return)
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
         i_recoveryVault = recoveryVault;
     }
