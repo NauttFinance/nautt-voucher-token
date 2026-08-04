@@ -18,6 +18,7 @@ contract NvtTest is Test {
     address public WALLET_ADMIN = makeAddr("DEFAULT_ADMIN"); // wallet multisig
     address public RECOVERY_VAULT = makeAddr("RECOVERY_VAULT"); // vault secundária
     bytes32 public PAYMENT_KEY = keccak256("PAYMENT_KEY");
+    bytes32 public PAYMENT_KEY2 = keccak256("PAYMENT_KEY2");
     bytes32 public EMAIL_HASH = keccak256("EMAIL_HASH");
     string public URI = "https://example.com/metadata.json";
 
@@ -148,6 +149,55 @@ contract NvtTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(Pausable.EnforcedPause.selector)
         );
+        nvt.mint(PAYMENT_KEY, EMAIL_HASH, URI);
+        vm.stopPrank();
+    }
+
+    /// @notice Cada pagamento distinto gera um tokenId único e sequencial (0, depois 1).
+    function testMintIncrementsTokenId() public {
+        // Arrange
+        vm.startPrank(MINTER);
+
+        // Act — capturamos o retorno de cada mint (o tokenId real gerado)
+        uint256 firstId = nvt.mint(PAYMENT_KEY, EMAIL_HASH, URI);
+        uint256 secondId = nvt.mint(PAYMENT_KEY2, EMAIL_HASH, URI);
+        vm.stopPrank();
+
+        // Assert
+        console.log(firstId);
+        console.log(secondId);
+        assertEq(firstId, 0); // primeiro token é 0
+        assertEq(secondId, 1); // segundo incrementou para 1
+        assertEq(nvt.mintedPaymentOf(PAYMENT_KEY), firstId); // mapping pagamento -> token
+        assertEq(nvt.mintedPaymentOf(PAYMENT_KEY2), secondId);
+    }
+
+    /// @notice tokensOf acumula todos os tokens de um mesmo email (via hash) e não vaza para outros.
+    function testTokensOfGroupsByEmail() public {
+        // Arrange
+        vm.startPrank(MINTER);
+        nvt.mint(PAYMENT_KEY, EMAIL_HASH, URI);
+        nvt.mint(PAYMENT_KEY2, EMAIL_HASH, URI);
+        vm.stopPrank();
+
+        // Act
+        uint256[] memory tokens = nvt.tokensOf(EMAIL_HASH);
+
+        // Assert
+        assertEq(tokens.length, 2);
+        console.log(tokens.length);
+        assertEq(tokens[0], 0);
+        assertEq(tokens[1], 1);
+    }
+
+    /// @notice O mint emite NvtMinted com tokenId, paymentKey, emailHash e uri corretos.
+    function testNvtMintedEvent() public {
+        // Arrange
+        vm.startPrank(MINTER);
+
+        // Act & Assert — o evento esperado é declarado ANTES da chamada
+        vm.expectEmit(true, true, true, true, address(nvt));
+        emit Nvt.NvtMinted(0, PAYMENT_KEY, EMAIL_HASH, URI);
         nvt.mint(PAYMENT_KEY, EMAIL_HASH, URI);
         vm.stopPrank();
     }
