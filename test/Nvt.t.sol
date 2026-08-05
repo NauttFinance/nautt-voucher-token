@@ -2,7 +2,7 @@
 pragma solidity 0.8.28;
 
 import {Test, console} from "forge-std/Test.sol";
-import {Nvt, InvalidPaymentKey, InvalidEmailHash, InvalidURI, PaymentAlreadyMinted} from "../src/Nvt.sol";
+import {Nvt, InvalidPaymentKey, InvalidEmailHash, InvalidURI, PaymentAlreadyMinted, TokenAlreadyClaimed, ZeroAddress} from "../src/Nvt.sol";
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 
@@ -13,6 +13,7 @@ contract NvtTest is Test {
     Nvt public nvt; // Storage do contrato
 
     // Fake addresses
+    address public USER = makeAddr("USER");
     address public OPERATOR = makeAddr("OPERATOR"); // lambda
     address public MINTER = makeAddr("MINTER"); // backend
     address public WALLET_ADMIN = makeAddr("DEFAULT_ADMIN"); // wallet multisig
@@ -199,6 +200,88 @@ contract NvtTest is Test {
         vm.expectEmit(true, true, true, true, address(nvt));
         emit Nvt.NvtMinted(0, PAYMENT_KEY, EMAIL_HASH, URI);
         nvt.mint(PAYMENT_KEY, EMAIL_HASH, URI);
+        vm.stopPrank();
+    }
+
+    modifier minted() {
+        vm.prank(MINTER);
+        nvt.mint(PAYMENT_KEY, EMAIL_HASH, URI);
+        _;
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                                  CLAIM
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Só o OPERATOR resgata: qualquer outro chamador (sem role ou com role errada) reverte.
+    function testNonOperatorCannotClaim() public minted {
+        bytes32 operatorRole = nvt.OPERATOR_ROLE();
+
+        address[2] memory callers = [USER, MINTER]; // sem role / com role errada
+        for (uint256 i = 0; i < callers.length; i++) {
+            vm.prank(callers[i]);
+            vm.expectRevert(
+                abi.encodeWithSelector(
+                    IAccessControl.AccessControlUnauthorizedAccount.selector,
+                    callers[i], // quem tentou
+                    operatorRole // papel que faltou
+                )
+            );
+            nvt.claim(0, USER);
+        }
+    }
+
+    /// @notice Happy path do resgate: o OPERATOR transfere o token do escrow pro USER e marca como resgatado.
+    function testOperatorCanClaimToClient() public minted {
+        // Arrange
+        vm.prank(OPERATOR);
+
+        // Act
+        nvt.claim(0, USER);
+       
+        // Assert
+        assertEq(nvt.ownerOf(0), USER); // o token foi transferido para o USER
+        assertTrue(nvt.isTokenClaimed(0)); // o token foi marcado como resgatado
+    }
+
+    /// @notice Rejeita resgate para o endereço zero (ZeroAddress).
+    function testZeroAddressCannotClaim() public minted {
+        // Arrange
+        vm.prank(OPERATOR);
+
+        // Act & Assert
+        vm.expectRevert(ZeroAddress.selector);
+        nvt.claim(0, address(0));
+    }
+
+    /// @notice Rejeita resgate de um token já resgatado (TokenAlreadyClaimed).
+    function testTokenAlreadyClaimed() public minted {
+        // Arrange
+        vm.startPrank(OPERATOR);
+        nvt.claim(0, USER);
+
+        // Act & Assert
+        vm.expectRevert(abi.encodeWithSelector(TokenAlreadyClaimed.selector, 0));
+        nvt.claim(0, USER);
+        vm.stopPrank();
+    }
+
+    modifier paused() {
+        vm.prank(WALLET_ADMIN);
+        nvt.pause();
+        _;
+    }
+
+    /// @notice Rejeita resgate quando o contrato está pausado.
+    function testClaimNotWorkingWhenPaused() public minted paused {
+        // Arrange
+        vm.startPrank(OPERATOR);
+
+        // Act & Assert
+        vm.expectRevert(
+            abi.encodeWithSelector(Pausable.EnforcedPause.selector)
+        );
+        nvt.claim(0, USER);
         vm.stopPrank();
     }
 }
