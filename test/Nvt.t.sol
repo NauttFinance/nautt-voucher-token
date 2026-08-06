@@ -5,6 +5,7 @@ import {Test, console} from "forge-std/Test.sol";
 import {Nvt, InvalidPaymentKey, InvalidEmailHash, InvalidURI, PaymentAlreadyMinted, TokenAlreadyClaimed, ZeroAddress} from "../src/Nvt.sol";
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
+import {IERC721Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 
 contract NvtTest is Test {
     /*//////////////////////////////////////////////////////////////
@@ -238,7 +239,7 @@ contract NvtTest is Test {
 
         // Act
         nvt.claim(0, USER);
-       
+
         // Assert
         assertEq(nvt.ownerOf(0), USER); // o token foi transferido para o USER
         assertTrue(nvt.isTokenClaimed(0)); // o token foi marcado como resgatado
@@ -261,7 +262,9 @@ contract NvtTest is Test {
         nvt.claim(0, USER);
 
         // Act & Assert
-        vm.expectRevert(abi.encodeWithSelector(TokenAlreadyClaimed.selector, 0));
+        vm.expectRevert(
+            abi.encodeWithSelector(TokenAlreadyClaimed.selector, 0)
+        );
         nvt.claim(0, USER);
         vm.stopPrank();
     }
@@ -283,5 +286,29 @@ contract NvtTest is Test {
         );
         nvt.claim(0, USER);
         vm.stopPrank();
+    }
+
+    /// @notice O claim emite NvtClaimed com o tokenId e o destinatário corretos.
+    function testClaimEmitEvent() public minted {
+        // Arrange
+        vm.startPrank(OPERATOR);
+
+        // Act & Assert — o evento esperado é declarado ANTES da chamada
+        vm.expectEmit(true, true, false, false, address(nvt));
+        emit Nvt.NvtClaimed(0, USER);
+        nvt.claim(0, USER);
+        vm.stopPrank();
+    }
+
+    /// @notice Resgatar um token inexistente reverte (ERC721NonexistentToken).
+    function testClaimNonexistentTokenReverts() public minted{
+        vm.prank(OPERATOR);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IERC721Errors.ERC721NonexistentToken.selector,
+                99
+            )
+        );
+        nvt.claim(99, USER);
     }
 }
