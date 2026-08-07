@@ -301,7 +301,7 @@ contract NvtTest is Test {
     }
 
     /// @notice Resgatar um token inexistente reverte (ERC721NonexistentToken).
-    function testClaimNonexistentTokenReverts() public minted{
+    function testClaimNonexistentTokenReverts() public minted {
         vm.prank(OPERATOR);
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -310,5 +310,50 @@ contract NvtTest is Test {
             )
         );
         nvt.claim(99, USER);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                                  RESCUE
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Só o admin resgata: qualquer outro chamador (sem role ou com role errada) reverte.
+    function testNonAdminCannotRescue() public minted {
+        bytes32 adminRole = nvt.DEFAULT_ADMIN_ROLE();
+
+        address[3] memory callers = [USER, MINTER, OPERATOR]; // sem role / com roles errados
+        for (uint256 i = 0; i < callers.length; i++) {
+            vm.prank(callers[i]);
+            vm.expectRevert(
+                abi.encodeWithSelector(
+                    IAccessControl.AccessControlUnauthorizedAccount.selector,
+                    callers[i], // quem tentou
+                    adminRole // papel que faltou
+                )
+            );
+            nvt.rescue(0);
+        }
+    }
+
+    /// @notice Happy path do rescue: o admin resgata e o token vai sempre para o cofre fixo (RECOVERY_VAULT).
+    function testAdminCanRescueToRecoveryVault() public minted {
+        // Arrange
+        vm.prank(WALLET_ADMIN);
+
+        // Act
+        nvt.rescue(0);
+
+        // Assert
+        assertTrue(nvt.isTokenClaimed(0)); // o token foi marcado como resgatado
+        assertEq(nvt.ownerOf(0), RECOVERY_VAULT); // o token foi transferido para o RECOVERY_VAULT
+    }
+
+    /// @notice O rescue funciona mesmo com o contrato pausado (é o caminho de saída do circuit breaker).
+    function testRescueWorksWhenPaused() public minted paused {
+        // Act — mesmo pausado, o admin resgata
+        vm.prank(WALLET_ADMIN);
+        nvt.rescue(0);
+
+        // Assert — deu certo: token foi pro cofre
+        assertEq(nvt.ownerOf(0), RECOVERY_VAULT);
     }
 }
