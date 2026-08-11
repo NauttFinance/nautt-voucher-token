@@ -2,15 +2,7 @@
 pragma solidity 0.8.28;
 
 import {Test, console} from "forge-std/Test.sol";
-import {
-    Nvt,
-    InvalidPaymentKey,
-    InvalidEmailHash,
-    InvalidURI,
-    PaymentAlreadyMinted,
-    TokenAlreadyClaimed,
-    ZeroAddress
-} from "../src/Nvt.sol";
+import {Nvt, InvalidPaymentKey, InvalidEmailHash, InvalidURI, PaymentAlreadyMinted, TokenAlreadyClaimed, ZeroAddress} from "../src/Nvt.sol";
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {IERC721Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
@@ -142,7 +134,9 @@ contract NvtTest is Test {
         vm.startPrank(MINTER);
         nvt.mint(PAYMENT_KEY, EMAIL_HASH, URI);
         // Act & Assert
-        vm.expectRevert(abi.encodeWithSelector(PaymentAlreadyMinted.selector, PAYMENT_KEY));
+        vm.expectRevert(
+            abi.encodeWithSelector(PaymentAlreadyMinted.selector, PAYMENT_KEY)
+        );
         nvt.mint(PAYMENT_KEY, EMAIL_HASH, URI);
         vm.stopPrank();
     }
@@ -156,7 +150,9 @@ contract NvtTest is Test {
 
         // Act & Assert
         vm.startPrank(MINTER);
-        vm.expectRevert(abi.encodeWithSelector(Pausable.EnforcedPause.selector));
+        vm.expectRevert(
+            abi.encodeWithSelector(Pausable.EnforcedPause.selector)
+        );
         nvt.mint(PAYMENT_KEY, EMAIL_HASH, URI);
         vm.stopPrank();
     }
@@ -268,7 +264,9 @@ contract NvtTest is Test {
         nvt.claim(0, USER);
 
         // Act & Assert
-        vm.expectRevert(abi.encodeWithSelector(TokenAlreadyClaimed.selector, 0));
+        vm.expectRevert(
+            abi.encodeWithSelector(TokenAlreadyClaimed.selector, 0)
+        );
         nvt.claim(0, USER);
         vm.stopPrank();
     }
@@ -285,7 +283,9 @@ contract NvtTest is Test {
         vm.startPrank(OPERATOR);
 
         // Act & Assert
-        vm.expectRevert(abi.encodeWithSelector(Pausable.EnforcedPause.selector));
+        vm.expectRevert(
+            abi.encodeWithSelector(Pausable.EnforcedPause.selector)
+        );
         nvt.claim(0, USER);
         vm.stopPrank();
     }
@@ -305,7 +305,12 @@ contract NvtTest is Test {
     /// @notice Resgatar um token inexistente reverte (ERC721NonexistentToken).
     function testClaimNonexistentTokenReverts() public minted {
         vm.prank(OPERATOR);
-        vm.expectRevert(abi.encodeWithSelector(IERC721Errors.ERC721NonexistentToken.selector, 99));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IERC721Errors.ERC721NonexistentToken.selector,
+                99
+            )
+        );
         nvt.claim(99, USER);
     }
 
@@ -361,7 +366,9 @@ contract NvtTest is Test {
         nvt.rescue(0);
 
         // Act & Assert
-        vm.expectRevert(abi.encodeWithSelector(TokenAlreadyClaimed.selector, 0));
+        vm.expectRevert(
+            abi.encodeWithSelector(TokenAlreadyClaimed.selector, 0)
+        );
         nvt.rescue(0);
         vm.stopPrank();
     }
@@ -374,7 +381,9 @@ contract NvtTest is Test {
 
         // Act & Assert
         vm.prank(OPERATOR);
-        vm.expectRevert(abi.encodeWithSelector(TokenAlreadyClaimed.selector, 0));
+        vm.expectRevert(
+            abi.encodeWithSelector(TokenAlreadyClaimed.selector, 0)
+        );
         nvt.claim(0, USER);
     }
 
@@ -410,6 +419,10 @@ contract NvtTest is Test {
         vm.expectRevert(ZeroAddress.selector);
         new Nvt(WALLET_ADMIN, address(0));
     }
+
+     /*//////////////////////////////////////////////////////////////
+                            PAUSE / UNPAUSE
+    //////////////////////////////////////////////////////////////*/
 
     /// @notice O admin pausa e despausa, alternando o estado do contrato.
     function testAdminCanPauseAndUnpause() public {
@@ -447,6 +460,23 @@ contract NvtTest is Test {
                 )
             );
             nvt.pause();
+        }
+    }
+
+    /// @notice Um não-admin não consegue despausar o contrato.
+    function testNonAdminCannotUnpause() public paused {
+        bytes32 adminRole = nvt.DEFAULT_ADMIN_ROLE();
+        address[3] memory callers = [USER, MINTER, OPERATOR];
+        for (uint256 i = 0; i < callers.length; i++) {
+            vm.prank(callers[i]);
+            vm.expectRevert(
+                abi.encodeWithSelector(
+                    IAccessControl.AccessControlUnauthorizedAccount.selector,
+                    callers[i],
+                    adminRole
+                )
+            );
+            nvt.unpause();
         }
     }
 
