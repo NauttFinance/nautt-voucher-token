@@ -226,8 +226,9 @@ forge-std/=lib/forge-std/src/
 - [x] Scaffold Foundry criado; `Counter.sol`/`Counter.s.sol`/`Counter.t.sol` removidos.
 - [x] OpenZeppelin v5.6.1 instalado (`lib/openzeppelin-contracts`) + `remappings.txt`.
 - [x] `Nvt.sol` com `mint`, `claim` e `rescue` implementados (rescue com cofre fixo `i_recoveryVault`; `NotImplemented` removido).
-- [ ] `forge build` de validação (pendente rodar na máquina do Gabriel).
-- [ ] Testes (unit + fuzz): idempotência do `mint`, resgate único no `claim`, `rescue` só admin/destino fixo, roles, pause.
-- [ ] Script de deploy (constructor agora recebe `admin` e `recoveryVault`).
+- [x] `forge build` OK (compila; testes rodam).
+- [x] Suíte de testes completa em `test/Nvt.t.sol` — **32 testes, cobertura 100%** (linhas 49/49, statements 38/38, branches 8/8, funcs 11/11). Cobre constructor, mint, claim, rescue, pause/unpause e supportsInterface: happy paths, reverts de acesso/validação, idempotência, resgate único, invariante cruzado, funciona-pausado do rescue e eventos.
+- [ ] Script de deploy (constructor recebe `admin` e `recoveryVault`).
+- [ ] (Opcional) Mutation testing (slither-mutate) para além da cobertura.
 
 _Atualizar esta seção a cada passo concluído._
